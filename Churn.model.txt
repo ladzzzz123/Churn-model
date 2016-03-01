@@ -1,0 +1,198 @@
+#############################
+##Download SPSS Data Files###
+#############################
+library(foreign);
+dataset = read.spss("C:/Users/Vivek/Documents/MS Marketing Analytics/FALL '15/Statistical Programming - BUMK758E/Final Project/Cell2Cell_SPSS_Data.sav", to.data.frame=TRUE);
+calibration <- dataset[dataset$CALIBRAT == 1, ];
+validation <- dataset[dataset$CALIBRAT == 0, ];
+
+
+
+#############################
+##Step-wise GLM ###
+#############################
+library(Rcmdr);
+
+# GLM with all variables
+stepfit<-glm(CHURNDEP ~ EQPB + MONB + EQP2 + EQPMON + REVENUE + MOU + RECCHRGE + DIRECTAS + OVERAGE + ROAM + CHANGEM + CHANGER + DROPVCE + BLCKVCE + UNANSVCE + CUSTCARE + THREEWAY + MOUREC + OUTCALLS + INCALLS + PEAKVCE + OPEAKVCE + DROPBLK + CALLFWDV + CALLWAIT + MONTHS + UNIQSUBS + ACTVSUBS + PHONES + MODELS + EQPDAYS + AGE1 + AGE2 + CHILDREN + CREDITA + CREDITAA + CREDITB + CREDITC + CREDITDE + CREDITGY + CREDITZ + PRIZMRUR + PRIZMUB + PRIZMTWN + REFURB + WEBCAP + TRUCK + RV + OCCPROF + OCCCLER + OCCCRFT + OCCSTUD + OCCHMKR + OCCRET + OCCSELF + OWNRENT + MARRYUN + MARRYYES + MARRYNO + MAILORD + MAILRES + MAILFLAG + TRAVEL + PCOWN + CREDITCD + RETCALLS + RETACCPT + NEWCELLY + NEWCELLN + REFER + INCMISS + INCOME + MCYCLE + CREDITAD + SETPRCM + SETPRC + RETCALL,data = calibration, family=binomial);
+
+# Stepwise selection process
+stepfit1<-stepwise(stepfit, direction="backward/forward", criterion="BIC")
+
+###################################
+##Capturing Information Values and WOE###
+###################################
+
+library(Information)
+library(gridExtra)
+
+## Ranking variables using Information Values (IVs)
+IV<-create_infotables(data=calibration, y="CHURNDEP")
+## Displaying the variables by IV
+print(IV$Summary)
+## EQPDAYS, MONTHS, the dummy transformed variables using
+## these two have the highest IVs and the only other variable 
+## with an IV of > 0.05 (significant predictive power) is
+## CSA
+## Now trying to plot the WOE Patterns for them
+##jpeg(filename = "WOE-EQPDAYS.jpg", width = 1200, height = 800)
+plot_infotables(IV, "EQPDAYS")
+##dev.off()
+plot_infotables(IV, "MONTHS")
+plot_infotables(IV, "MOU")
+
+## R Code for Growing rpart() Tree, Train, GLM, and Developing ROC Curve for Testing
+############################################
+#Applying Transformations###
+############################################
+
+dataset$MOU[dataset$MOU == 0] <- 0.000001;
+dataset$MOULOG <- log(dataset$MOU);
+
+dataset$EQPB <- rep(0,71047);
+dataset$MONB <- rep(0,71047);
+
+dataset$EQPB[dataset$EQPDAYS > 301] <- 1;
+dataset$MONB[dataset$MONTHS > 10] <- 1;
+
+dataset$EQMON <- dataset$EQPB*dataset$MONB;
+
+############################################
+#Create Calibration and Validation Sample###
+############################################
+
+calibration <- dataset[dataset$CALIBRAT == 1, ];
+validation <- dataset[dataset$CALIBRAT == 0, ];
+
+
+#########################
+##Cross Validation#######
+#########################
+
+#K Fold cross validation correctly selects the parameter value for minbucket
+#When doing cross-validation in R, use cp (complexity parameter) instead of minbucket
+# cp measures accuracy vs complexity accuracy
+
+library(caret)
+library(e1071)
+
+#Let R know how many folds to use
+numFolds = trainControl(method="cv", number = 10)
+
+
+#cpGrid = expand.grid(.cp = seq(0.01, 0.5, 0.01))
+
+#First column gives the cp parameters tested
+#Second column gives the accuracy for that cp value
+#R will select optimal cp value
+#fit <- train(CHURNDEP ~ EQPDAYS+RETCALL+AGE1+CREDITDE+REFURB+MONTHS+CHANGEM+CHANGER+RECCHRGE+REVENUE+MOU+PHONES+CREDITC+DROPVCE+WEBCAP+SETPRCM+MAILRES+UNIQSUBS+ACTVSUBS+CHILDREN+INCALLS+PRIZMUB+NEWCELLY+ROAM+OVERAGE+MARRYUN+THREEWAY+BLCKVCE+CUSTCARE+SETPRC+PEAKVCE+UNANSVCE, data = calibration, method = "gbm", trControl = numFolds,tuneLength=1)
+
+########################
+##Create Logistic Model#####
+########################
+
+fit1<-glm(CHURNDEP ~ EQPB + MONB + EQMON + MOULOG + RECCHRGE + OVERAGE + CHANGEM + CHANGER + DROPVCE + BLCKVCE + MOUREC + PEAKVCE + OPEAKVCE + DROPBLK + CALLFWDV + CALLWAIT + MONTHS + MODELS + EQPDAYS + AGE2 + CHILDREN + CREDITAA + CREDITB + CREDITC + CREDITDE + CREDITGY + CREDITZ + PRIZMRUR + PRIZMTWN + REFURB + TRUCK + OCCPROF + OCCCLER + OCCSTUD + OCCHMKR + OCCRET + OWNRENT + MARRYNO + MAILRES + MAILFLAG + PCOWN + RETCALLS + RETACCPT + NEWCELLN + INCOME + CREDITAD + SETPRCM, data = calibration, family="binomial");
+
+########################
+##Create CART Model#####
+########################
+library(rpart);
+
+fit2<-rpart(CHURNDEP ~ EQPDAYS + MONTHS + CHANGEM + MOU + RETCALL + OVERAGE + WEBCAP + INCALLS + SETPRC + REFURB + AGE2 + INCOME + MAILORD + BLCKVCE + MARRYUN + ACTVSUBS + MARRYNO + NEWCELLN + PRIZMUB + OCCCRFT, data = calibration,cp=10^(-7), minsplit = 377);
+
+#Pruning the tree
+#cp9 = which(fit$cptable[, 2] == 9);
+#fit = prune(fit,fit$cptable[cp9, 1]);
+# now lets look at the tree with print() and summary()
+#print(fit);
+
+#############################
+##Create image of tree##
+#############################
+png("cellchurn.png", width = 1200, height = 800);
+post(fit, file = "", title. = "Classifying Churn Data Variables",
+ 	bp = 18);
+dev.off();
+
+########################
+##Create Random Forest Model#####
+########################
+
+library(randomForest);
+
+fit3<-randomForest(CHURNDEP ~ EQPDAYS + MONTHS + CHANGEM + MOU + RETCALL + OVERAGE + WEBCAP + INCALLS + SETPRC + REFURB + AGE2 + INCOME + MAILORD + BLCKVCE + MARRYUN + ACTVSUBS + MARRYNO + NEWCELLN + PRIZMUB + OCCCRFT, data = calibration,cp = 10^(-7), nodesize = 750, ntree = 500, na.action = na.exclude);
+
+########################
+##Create Conditional Inference tree Model#####
+########################
+
+library(party);
+
+fit4<-ctree(CHURNDEP ~ EQPDAYS + MONTHS + CHANGEM + MOU + RETCALL + OVERAGE + WEBCAP + INCALLS + SETPRC + REFURB + AGE2 + INCOME + MAILORD + BLCKVCE + MARRYUN + ACTVSUBS + MARRYNO + NEWCELLN + PRIZMUB + OCCCRFT, data = calibration);
+
+#####################
+##Predict validation data for all fits##
+#####################
+
+library(ROCR);
+
+validation$CHURNDEP <- predict(object = fit1, newdata = validation);
+validation <- validation[order(validation$CHURNDEP, decreasing=TRUE),];
+pred1 <- prediction(validation$CHURNDEP, validation$CHURN);
+
+validation$CHURNDEP <- predict(object = fit2, newdata = validation);
+validation <- validation[order(validation$CHURNDEP, decreasing=TRUE),];
+pred2 <- prediction(validation$CHURNDEP, validation$CHURN);
+
+validation$CHURNDEP <- predict(object = fit3, newdata = validation);
+validation <- validation[order(validation$CHURNDEP, decreasing=TRUE),];
+pred3 <- prediction(validation$CHURNDEP, validation$CHURN);
+
+validation$CHURNDEP <- predict(object = fit4, newdata = validation);
+validation <- validation[order(validation$CHURNDEP, decreasing=TRUE),];
+pred4 <- prediction(validation$CHURNDEP, validation$CHURN);
+
+##################
+##Plot ROC Curves##
+##################
+
+
+#first argument is outcome of prediction function
+#second and third argument are x and y axis
+#tpr = true positive rate
+#fpr = false positive rate
+perf1 <- performance(pred1,"tpr","fpr");
+perf2 <- performance(pred2,"tpr","fpr");
+perf3 <- performance(pred3,"tpr","fpr");
+perf4 <- performance(pred4,"tpr","fpr");
+
+#plot ROC curves
+plot(perf1, colorize = FALSE, text.adj=c(-0.2, 1.7), main = "Plot of ROC curve for all models", col = "RED");
+plot(perf2, add = TRUE, colorize = FALSE, text.adj=c(-0.2, 1.7), col = "GREEN");
+plot(perf3, add = TRUE, colorize = FALSE, text.adj=c(-0.2, 1.7), col = "BLUE");
+plot(perf4, add = TRUE, colorize = FALSE, text.adj=c(-0.2, 1.7), col = "BROWN");
+
+######################################
+##Calculate the area under the curve##
+######################################
+
+library(pROC);
+
+area.result <- roc(formula = CHURN ~ CHURNDEP, data = validation);
+area <- area.result$auc[1];
+
+########################
+##Other  Models#####
+########################
+
+fit <- cforest(CHURNDEP ~ EQPDAYS + MONTHS + CHANGEM + MOU + RETCALL + OVERAGE + WEBCAP + INCALLS + SETPRC + REFURB + AGE2 + INCOME + MAILORD + BLCKVCE + MARRYUN + ACTVSUBS + MARRYNO + NEWCELLN + PRIZMUB + OCCCRFT, data = calibration, controls = cforest_unbiased(ntree=100, minsplit=377));
+
+##############################################
+##Create prediction and save outcome in file##
+##############################################
+
+validation$CHURNDEP <- predict(object = fit1, newdata = validation);
+
+validation <- validation[order(validation$CHURNDEP, decreasing=TRUE),] ;
+
+write.csv(validation, file="validationpredictions.csv");
